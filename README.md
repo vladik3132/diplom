@@ -1,5 +1,5 @@
 # diplom
-# diplom
+
  команда на запуск 
  docker compose up -d --build
 
