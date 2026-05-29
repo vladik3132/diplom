@@ -1,0 +1,225 @@
+server:
+  port: 8081
+  # Tomcat ліміти для великих файлів — щоб клієнт отримав HTTP 413 з повідомленням,
+  # а не raw connection-reset якщо завантаження > 60 МБ multipart-ліміту.
+  tomcat:
+    max-swallow-size: -1               # -1 = читати потік до кінця навіть при відхиленні
+    max-http-form-post-size: 70MB      # дозволяємо саме потік (form-multipart), що виходить за multipart-ліміт
+
+spring:
+  application:
+    name: TeacherLicence
+  profiles:
+    active: prod
+
+  # --- JPA common settings ---
+  jpa:
+    open-in-view: true
+    properties:
+      hibernate:
+        format_sql: false
+
+  # --- Liquibase common settings ---
+  liquibase:
+    enabled: true
+    change-log: classpath:db/changelog/db.changelog-master.yaml
+
+  # --- AI (Mistral via OpenAI-compatible API) ---
+  ai:
+    openai:
+      api-key: ${MISTRAL_API_KEY:V6l81jnhtgR7S1C5cwtenvT5XEZzgSHI}
+      base-url: ${MISTRAL_CLIENT_SERVER_URL:https://api.e96cc8beda11.dc.mistral.ai}
+      chat:
+        options:
+          model: ${MISTRAL_MODEL:mistral-medium-latest}
+          temperature: 0.3
+      # Embeddings: mistral-embed (1024-dim). Використовується RAG-семантичним пошуком.
+      embedding:
+        options:
+          model: ${MISTRAL_EMBED_MODEL:mistral-embed}
+
+  # --- File upload ---
+  servlet:
+    multipart:
+      max-file-size: 60MB
+      max-request-size: 60MB
+
+# --- JWT ---
+app:
+  jwt:
+    secret: ${JWT_SECRET:default-dev-secret-key-change-in-production-must-be-at-least-256-bits-long}
+    expiration-ms: 86400000 # 24 hours
+  cors:
+    origins: ${CORS_ORIGINS:http://localhost:5173}
+  docx:
+    templates-dir: ${DOCX_TEMPLATES_DIR:./templates}
+  google-drive:
+    enabled: ${GOOGLE_DRIVE_ENABLED:true}
+    credentials-path: ${GOOGLE_DRIVE_CREDENTIALS:D:\work\TeacherLicence\gradebook-service.json}
+    root-folder-id: ${GOOGLE_DRIVE_ROOT_FOLDER_ID:0ANCLqDtGQaE0Uk9PVA}
+    max-file-size-mb: 60
+
+# --- Keycloak SSO ---
+keycloak:
+  enabled: ${KEYCLOAK_ENABLED:false}
+  auth-url: ${KEYCLOAK_URL:https://auth.viti.edu.ua}
+  realm: ${KEYCLOAK_REALM:grade-book}
+  jwk-set-uri: ${KEYCLOAK_URL:https://auth.viti.edu.ua}/realms/${KEYCLOAK_REALM:grade-book}/protocol/openid-connect/certs
+
+# --- Scopus API ---
+scopus:
+  enabled: ${SCOPUS_API_ENABLED:false}
+  api-key: ${SCOPUS_API_KEY:}
+
+# --- AI toggle ---
+ai:
+  enabled: ${AI_ENABLED:true}
+
+---
+# ========================
+#  DEV PROFILE
+# ========================
+spring:
+  config:
+    activate:
+      on-profile: dev
+
+  datasource:
+    url: jdbc:h2:mem:teacher_licence;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+      settings:
+        web-allow-others: false
+
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+
+  liquibase:
+    enabled: false # Rely on Hibernate ddl-auto in dev
+
+  # В dev немає PGVector (H2) — вимикаємо auto-конфіг vector store
+  autoconfigure:
+    exclude:
+      - org.springframework.ai.autoconfigure.vectorstore.pgvector.PgVectorStoreAutoConfiguration
+
+# RAG-індексація вимкнена у dev (немає pgvector)
+ai:
+  rag:
+    enabled: false
+
+logging:
+  level:
+    ua.edu.teacherlicence: DEBUG
+    org.springframework.security: DEBUG
+
+---
+# ========================
+#  SCHEMA-GEN PROFILE (одноразово, для генерації init-schema.sql з JPA-entities)
+# ========================
+# Запуск: ./mvnw spring-boot:run -Dspring-boot.run.profiles=schema-gen
+# Файл з'явиться у target/init-schema.sql з повним DDL для PostgreSQL.
+# Підключення до реальної БД не потрібне — генерація з metadata.
+spring:
+  config:
+    activate:
+      on-profile: schema-gen
+
+  datasource:
+    url: jdbc:h2:mem:schemagen;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+
+  jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    hibernate:
+      ddl-auto: none
+    properties:
+      jakarta.persistence.schema-generation.database.action: none
+      jakarta.persistence.schema-generation.scripts.action: create
+      jakarta.persistence.schema-generation.scripts.create-target: target/init-schema.sql
+      jakarta.persistence.schema-generation.scripts.create-source: metadata
+
+  liquibase:
+    enabled: false
+
+  autoconfigure:
+    exclude:
+      - org.springframework.ai.autoconfigure.vectorstore.pgvector.PgVectorStoreAutoConfiguration
+
+ai:
+  enabled: false
+  rag:
+    enabled: false
+
+---
+# ========================
+#  PROD PROFILE
+# ========================
+spring:
+  config:
+    activate:
+      on-profile: prod
+
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/teacher_licence}
+    driver-class-name: org.postgresql.Driver
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+    # HikariCP tuning для 100 concurrent users
+    hikari:
+      maximum-pool-size: 50
+      minimum-idle: 20
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+
+  jpa:
+    # TODO: перевести всі controllers на DTO і поставити open-in-view: false
+    # Наразі true, бо багато endpoints повертають entity з LAZY-зв'язками напряму,
+    # і Jackson серіалізує їх поза транзакцією → LazyInitializationException.
+    open-in-view: true
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    hibernate:
+      ddl-auto: validate  # Liquibase — єдине джерело правди для DDL. Hibernate тільки валідує.
+    show-sql: false
+
+  # Liquibase — для керованих міграцій (індекси + cache tables + MV).
+  # Усі changesets написані idempotent (IF NOT EXISTS / preconditions),
+  # тому безпечно накладаються на existing БД з даними від ddl-auto=update.
+  liquibase:
+    enabled: true
+    change-log: classpath:db/changelog/db.changelog-master.yaml
+    contexts: prod
+
+  # PGVector — автоматично створює таблицю vector_store та HNSW-індекс.
+  # ПЕРЕДУМОВА: в БД має бути встановлений extension `vector` (pgvector).
+  # Виконайте як superuser: CREATE EXTENSION IF NOT EXISTS vector;
+  # (Якщо немає прав — initialize-schema=false і створіть таблицю вручну)
+  ai:
+    vectorstore:
+      pgvector:
+        initialize-schema: ${PGVECTOR_INIT_SCHEMA:true}
+        index-type: HNSW
+        distance-type: COSINE_DISTANCE
+        dimensions: 1024
+
+# RAG-семантичний пошук: ввімкнений на prod (потрібен pgvector)
+ai:
+  rag:
+    enabled: ${AI_RAG_ENABLED:true}
+    # Інтервал повної реіндексації (ms). Default: 5 хв.
+    reindex-interval-ms: ${AI_RAG_REINDEX_MS:1800000}   # 30 хв (було 5) — менше навантаження на pool
+
+logging:
+  level:
+    ua.edu.teacherlicence: INFO

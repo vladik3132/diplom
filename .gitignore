@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+target/
+out/
+build/
+
+# IDE
+.idea/
+*.iws
+*.iml
+*.ipr
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Secrets
+gradebook-service.json
+docker/nginx/certs/*.key
+docker/nginx/certs/*.crt
+
+# Logs
+*.log
+npm-debug.log*
+
+# Claude
+.claude/worktrees/

@@ -1,0 +1,101 @@
+# ════════════════════════════════════════════════════════════
+#  TeacherLicence — CI/CD pipeline
+#  Registry: https://registry.viti.edu.ua (через Cloudflare Tunnel)
+# ════════════════════════════════════════════════════════════
+
+stages:
+  - build
+  - deploy
+
+variables:
+  IMAGE_BACKEND:  "${CI_REGISTRY_IMAGE}/backend"
+  IMAGE_FRONTEND: "${CI_REGISTRY_IMAGE}/frontend"
+  DOCKER_HOST: "tcp://docker:2375"
+  DOCKER_TLS_CERTDIR: ""
+  DOCKER_DRIVER: overlay2
+
+default:
+  image: docker:26
+  services:
+    - name: docker:26-dind
+      alias: docker
+  before_script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    # buildx з docker-container driver вміє кешувати всі stages
+    # (включно з maven build) у registry як окремий tag :buildcache.
+    - docker buildx create --use --driver=docker-container --name=ci-builder --bootstrap
+
+build-backend:
+  stage: build
+  script:
+    - docker buildx build
+        --cache-from "type=registry,ref=$IMAGE_BACKEND:buildcache"
+        --cache-to   "type=registry,ref=$IMAGE_BACKEND:buildcache,mode=max"
+        --tag "$IMAGE_BACKEND:$CI_COMMIT_SHORT_SHA"
+        --tag "$IMAGE_BACKEND:latest"
+        --push
+        ./backend
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "master"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+
+build-frontend:
+  stage: build
+  script:
+    - docker buildx build
+        --cache-from "type=registry,ref=$IMAGE_FRONTEND:buildcache"
+        --cache-to   "type=registry,ref=$IMAGE_FRONTEND:buildcache,mode=max"
+        --tag "$IMAGE_FRONTEND:$CI_COMMIT_SHORT_SHA"
+        --tag "$IMAGE_FRONTEND:latest"
+        --push
+        ./frontend
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "master"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+
+# ─── Deploy (manual) — пулить свіжі образи на прод VM по SSH ───
+# Потрібні CI/CD variables:
+#   DEPLOY_SSH_KEY_B64  (Variable, base64 приватного ключа)
+#   DEPLOY_HOST         (10.1.17.169)
+#   DEPLOY_USER         (dep22admin)
+deploy-prod:
+  stage: deploy
+  image: alpine:3.20
+  before_script:
+    - apk add --no-cache openssh-client coreutils
+    - eval $(ssh-agent -s)
+    - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+    - echo "$DEPLOY_SSH_KEY_B64" | base64 -d > ~/.ssh/deploy_key
+    - chmod 600 ~/.ssh/deploy_key
+    - ssh-add ~/.ssh/deploy_key
+    - ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+  script:
+    # heredoc БЕЗ лапок навколо REMOTE_SCRIPT — $CI_COMMIT_SHORT_SHA
+    # експандиться локально (в CI), на сервер летить вже значення SHA.
+    - |
+      ssh "$DEPLOY_USER@$DEPLOY_HOST" bash -s <<REMOTE_SCRIPT
+      set -euo pipefail
+      cd /opt/teacherlicence
+
+      echo "[deploy] git fetch + reset до origin/master..."
+      git fetch --quiet origin
+      git reset --hard origin/master --quiet
+
+      echo "[deploy] Pulling images tag=$CI_COMMIT_SHORT_SHA..."
+      IMAGE_TAG=$CI_COMMIT_SHORT_SHA docker compose -f docker-compose.prod.yml pull
+
+      echo "[deploy] Restarting stack..."
+      IMAGE_TAG=$CI_COMMIT_SHORT_SHA docker compose -f docker-compose.prod.yml up -d --remove-orphans
+
+      sleep 10
+      echo "[deploy] Backend logs (last 50):"
+      docker compose -f docker-compose.prod.yml logs --tail=50 backend
+
+      echo "[deploy] Prune dangling images..."
+      docker image prune -f
+
+      echo "[deploy] Done."
+      REMOTE_SCRIPT
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "master"'
+      when: manual

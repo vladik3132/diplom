@@ -1,0 +1,67 @@
+databaseChangeLog:
+  # ══════════════════════════════════════════════════════════════
+  # Master changelog для TeacherLicence.
+  #
+  # Liquibase — єдине джерело правди для схеми.
+  # Hibernate: ddl-auto=validate (лише валідує, не змінює DDL).
+  #
+  # При додаванні нової ентіті / зміні колонки — писати новий changeset,
+  # НЕ редагувати застосовані файли (Liquibase перевіряє checksum).
+  # ══════════════════════════════════════════════════════════════
+
+  - include:
+      file: db/changelog/changes/001-init-schema.sql
+
+  - include:
+      file: db/changelog/changes/002-perf-indexes.sql
+
+  - include:
+      file: db/changelog/changes/003-compliance-mv.sql
+
+  - include:
+      file: db/changelog/changes/004-publication-date.sql
+
+  - include:
+      file: db/changelog/changes/005-academic-degrees.sql
+
+  - include:
+      file: db/changelog/changes/006-academic-titles.sql
+
+  - include:
+      file: db/changelog/changes/007-title-matches-department.sql
+
+  - include:
+      file: db/changelog/changes/008-drop-flat-degree-title.sql
+
+  - include:
+      file: db/changelog/changes/009-cleanup-position-strings.sql
+
+  - include:
+      file: db/changelog/changes/010-cleanup-leadership-positions.sql
+
+  - include:
+      file: db/changelog/changes/011-departments-rating-excluded.sql
+
+  - include:
+      file: db/changelog/changes/012-teacher-date-of-birth.sql
+
+  - include:
+      file: db/changelog/changes/013-staff-position-bootstrapped-flag.sql
+
+  - include:
+      file: db/changelog/changes/014-bootstrap-staff-positions.sql
+
+  - include:
+      file: db/changelog/changes/015-drop-teacher-position.sql
+
+  - include:
+      file: db/changelog/changes/016-create-foreign-internships.sql
+
+  - include:
+      file: db/changelog/changes/017-attestation-roles-refactor.sql
+
+  - include:
+      file: db/changelog/changes/018-rating-criterion-attestation-rename.sql
+
+  - include:
+      file: db/changelog/changes/019-remove-council-chair-criterion.sql
